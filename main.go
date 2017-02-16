@@ -1,9 +1,11 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"image"
-	_ "image/png"
+	"image/draw"
+	"image/png"
 	"os"
 )
 
@@ -15,6 +17,7 @@ type ImageInfo struct {
 
 func ExitOnError(err error) {
 	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -22,7 +25,7 @@ func ExitOnError(err error) {
 func LoadImages(filenames []string) ([]ImageInfo, error) {
 	images := []ImageInfo{}
 
-	for _, f := range os.Args[1:] {
+	for _, f := range filenames {
 		fmt.Print("Loading: ", f, "....")
 
 		file, err := os.Open(f)
@@ -60,11 +63,63 @@ func MaxImageSize(images []ImageInfo) image.Point {
 	return max
 }
 
+func TileOnImage(images []ImageInfo, tileSz image.Point, tileCols int) image.Image {
+	tileRows := len(images) / tileCols
+	if len(images)%tileCols > 0 {
+		tileRows++
+	}
+
+	dest := image.NewNRGBA(image.Rect(0, 0, tileSz.X*tileCols, tileSz.Y*tileRows))
+
+	for i := range images {
+		x := (i%tileCols)*tileSz.X + (tileSz.X-images[i].size.X)/2
+		y := (i/tileCols)*tileSz.Y + (tileSz.Y-images[i].size.Y)/2
+		draw.Draw(dest, image.Rect(x, y, tileSz.X+x, tileSz.Y+y), images[i].img, image.ZP, draw.Src)
+	}
+
+	return dest
+}
+
+type Config struct {
+	Help           bool
+	TileCols       int
+	OutputFilename string
+}
+
+var config Config
+
+func init() {
+	flag.BoolVar(&config.Help, "h", false, "display help")
+	flag.IntVar(&config.TileCols, "c", 3, "Tile column count")
+	flag.StringVar(&config.OutputFilename, "o", "out.png", "output filename")
+
+	flag.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: spritetiler [options] sourcefiles")
+		flag.PrintDefaults()
+	}
+}
+
 func main() {
 
-	images, err := LoadImages(os.Args[1:])
+	flag.Parse()
+
+	if len(flag.Args()) == 0 && config.Help {
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	images, err := LoadImages(flag.Args())
 	ExitOnError(err)
 
-	fmt.Println("max image size = ", MaxImageSize(images))
+	maxSz := MaxImageSize(images)
 
+	fmt.Println("max image size = ", maxSz)
+
+	all := TileOnImage(images, maxSz, config.TileCols)
+
+	f, err := os.Create(config.OutputFilename)
+	ExitOnError(err)
+
+	err = png.Encode(f, all)
+	ExitOnError(err)
 }
